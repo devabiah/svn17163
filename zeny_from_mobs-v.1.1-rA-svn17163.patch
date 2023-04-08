@@ -1,0 +1,318 @@
+Index: conf/battle/monster_zeny.conf
+===================================================================
+--- conf/battle/monster_zeny.conf	(revision 0)
++++ conf/battle/monster_zeny.conf	(working copy)
+@@ -0,0 +1,10 @@
++// [Cydh]
++// Stuck with current zeny rate too slow? Adjust it!	(Note 2)
++// Default is 100 = 100% = 1x = normal
++//   200 = 200% = 2x
++//   1000 = 1000% = 10x
++// Min. rate is 1 = 0.01%
++// Max. rate is set at mob.h, MAX_ZENY_FROM_MOBS_RATES's default is 1000000 = 1,000,000% = 10,000x
++// More adjustement can be met on mob_zeny_db.txt
++zeny_from_mobs_rate: 100
++zeny_from_boss_rate: 100
+Index: conf/battle_athena.conf
+===================================================================
+--- conf/battle_athena.conf	(revision 17163)
++++ conf/battle_athena.conf	(working copy)
+@@ -57,5 +57,8 @@
+ // Includes duel, day/night, mute/manner, log settings.
+ import: conf/battle/misc.conf
+ 
++// Import config file for zeny_from_mobs adjustments
++import: conf/battle/monster_zeny.conf
++
+ //Your custom config goes here.
+ import: conf/import/battle_conf.txt
+Index: conf/msg_conf/map_msg.conf
+===================================================================
+--- conf/msg_conf/map_msg.conf	(revision 17163)
++++ conf/msg_conf/map_msg.conf	(working copy)
+@@ -1409,5 +1409,11 @@
+ // @skillid (extension)
+ 1398: -- Displaying first %d partial matches:
+ 
++// Adjust zeny dropped from mobs
++1399: Zeny: %dz.
++1400: Zeny: *Normal calculation*. Zeny rate: %.2f
++1401: Zeny: *Normal calculation*. Zeny rate: *Normal Rate*
++1402: Drop Zeny Rates: Normal %.2fx / Boss %.2fx
++
+ //Custom translations
+ import: conf/import/msg_conf.txt
+Index: db/mob_zeny_db.txt
+===================================================================
+--- db/mob_zeny_db.txt	(revision 0)
++++ db/mob_zeny_db.txt	(working copy)
+@@ -0,0 +1,44 @@
++// =============================================
++// Monster drop zeny adjustements by [Cydh]
++// house.bad@gmail.com
++// =============================================
++// Structure:
++// 		MonsterID,Zeny[,Rate]
++// ---------------------------------------------
++// MonsterID:
++// 	- Look at mob_db.txt
++// ---------------------------------------------
++// Zeny:
++// 	- Normal zeny gained by player when monster killed
++// 	- Values:
++//		-1			=	Zeny will gained based on normal calculation on mob.c
++//		0			=	Monster will not drops the zeny
++//		1 			=	1z is minimum zeny amount that will be gained
++//		1000000000	=	1,000,000,000z is Maximum zeny amount that will be gained
++// 	Notes:
++// 		- If you set this, normal zeny calculation will be ignored
++// 		- Actually, the maximum zeny gained is decided on MAX_ZENY on mmo.h
++// ---------------------------------------------
++// Rate (Optional):
++// 	- Percentage of zeny rate like on drops.conf
++// 	- Values:
++//		0			=	Left the rate calculation based on zeny_from_mobs_rate for normal mobs and zeny_from_boss_rate for boss mobs
++//		1			=	Minimum zeny rate, means 1% = 0.01x
++//		100			=	Normal zeny rate, means 100% = 1x. 1000 = 1000% = 10x
++//		1000000		=	Maximum zeny rate, means 1,000,000% = 10,000x.
++// 	Notes:
++// 		- If this is set, will ignore rate on zeny_from_mobs_rate/zeny_from_boss_rate
++// 		- Actually maximum rate is set on mob.h, MAX_ZENY_FROM_MOBS_RATES same like as zeny_from_mobs_rate/zeny_from_boss_rate amount
++// =============================================
++// Examples:
++// 1002,0					-> Poring NEVER drops zeny, even you set the rate here, it will be ignored! (e.g. 1002,0,1000)
++// 1002,-1,1000				-> Poring drops zeny based on normal calculation then the zeny gained is multiplied 10x (because the rate is set here 1000)
++// 1002,1000				-> Poring has normal 1,000z. Player will get the zeny based on rate on zeny_from_mobs_rate (e.g 100), will gained 1,000z
++// 1002,1000,1000			-> Poring has normal 1,000z. Player will get the 10,000z (1000 * 10%). zeny_from_mobs_rate is ignored!
++// 1002,-1					-> LOL useless!!
++// 1002,-1,0				-> LMAO useless!! Just like above. Better don't write this line. It means normal calculation
++// 1002,0,1000000			-> ROFL useless!!
++1001,0
++1002,-1,1000
++1004,1000
++1005,1000,1000
+Index: src/map/atcommand.c
+===================================================================
+--- src/map/atcommand.c	(revision 17163)
++++ src/map/atcommand.c	(working copy)
+@@ -6649,6 +6649,7 @@
+ 	struct mob_db *mob, *mob_array[MAX_SEARCH];
+ 	int count;
+ 	int i, j, k;
++	int mob_zeny, mob_zeny_rate;	// Adjust zeny
+ 
+ 	memset(atcmd_output, '\0', sizeof(atcmd_output));
+ 	memset(atcmd_output2, '\0', sizeof(atcmd_output2));
+@@ -6744,6 +6745,24 @@
+ 			else
+ 				clif_displaymessage(fd, atcmd_output);
+ 		}
++		// show zeny adjustments on mob_zeny_db.txt	[Cydh]
++		mob_zeny = mob->zeny;
++		mob_zeny_rate = mob->zeny_rate;
++		if(mob_zeny != -1)
++		{
++			sprintf(atcmd_output, msg_txt(1399), mob_zeny); // Zeny: %dz.
++			clif_displaymessage(fd, atcmd_output);
++		}
++		else if(mob_zeny == -1 && mob_zeny_rate)
++		{
++			sprintf(atcmd_output, msg_txt(1400), mob_zeny_rate/100.); // Zeny: *Normal calculation*. Zeny rate: %.2f
++			clif_displaymessage(fd, atcmd_output);
++		}
++		else
++		{
++			sprintf(atcmd_output, msg_txt(1401));	// Zeny: *Normal calculation*. Zeny rate: *Normal Rate*
++			clif_displaymessage(fd, atcmd_output);
++		}
+ 	}
+ 	return 0;
+ }
+@@ -7353,6 +7372,12 @@
+ 	snprintf(buf, CHAT_SIZE_MAX, msg_txt(1301), // Other Drop Rates: MvP %.2fx / Card-Based %.2fx / Treasure %.2fx
+ 		battle_config.item_rate_mvp/100., battle_config.item_rate_adddrop/100., battle_config.item_rate_treasure/100.);
+ 	clif_displaymessage(fd, buf);
++	if(battle_config.zeny_from_mobs)
++	{
++		snprintf(buf, CHAT_SIZE_MAX, msg_txt(1402), // Drop Zeny Rates: Normal %.2fx / Boss %.2fx
++			battle_config.zeny_from_mobs_rate/100., battle_config.zeny_from_boss_rate/100.);
++		clif_displaymessage(fd, buf);
++	}
+ 
+ 	return 0;
+ }
+Index: src/map/battle.c
+===================================================================
+--- src/map/battle.c	(revision 17163)
++++ src/map/battle.c	(working copy)
+@@ -5904,6 +5904,9 @@
+ 	{ "item_restricted_consumption_type",   &battle_config.item_restricted_consumption_type,1,      0,      1,              },
+ 	{ "max_walk_path",						&battle_config.max_walk_path,					17,     1,      MAX_WALKPATH,   },
+ 	{ "item_enabled_npc",					&battle_config.item_enabled_npc,				1,      0,      1,				},
++	// Adjust zeny rate from mobs [Cydh]
++	{ "zeny_from_mobs_rate",				&battle_config.zeny_from_mobs_rate,				100,	1,		MAX_ZENY_FROM_MOBS_RATES,	},
++	{ "zeny_from_boss_rate",				&battle_config.zeny_from_boss_rate,				100,	1,		MAX_ZENY_FROM_MOBS_RATES,	},
+ };
+ #ifndef STATS_OPT_OUT
+ /**
+Index: src/map/battle.h
+===================================================================
+--- src/map/battle.h	(revision 17163)
++++ src/map/battle.h	(working copy)
+@@ -487,6 +487,9 @@
+ 	int item_restricted_consumption_type;
+ 	int max_walk_path;
+ 	int item_enabled_npc;
++	// Adjust zeny rate gained from mobs. [Cydh]
++	int zeny_from_mobs_rate;
++	int zeny_from_boss_rate;
+ 	} battle_config;
+ 
+ void do_init_battle(void);
+Index: src/map/mob.c
+===================================================================
+--- src/map/mob.c	(revision 17163)
++++ src/map/mob.c	(working copy)
+@@ -2236,11 +2236,32 @@
+ 		if( md->dmglog[i].flag == MDLF_PET )
+ 			per *= battle_config.pet_attack_exp_rate/100.;
+ 
+-		if(battle_config.zeny_from_mobs && md->level) {
+-			 // zeny calculation moblv + random moblv [Valaris]
+-			zeny=(int) ((md->level+rnd()%md->level)*per*bonus/100.);
+-			if(md->db->mexp > 0)
+-				zeny*=rnd()%250;
++		if(battle_config.zeny_from_mobs && md->level && md->db->zeny != 0) {
++			// New zeny calculation from mobs. [Cydh]
++			int mob_zeny = md->db->zeny;
++			int mob_zeny_rate = md->db->zeny_rate;
++
++			//Check the zeny
++			if(mob_zeny == -1)
++			{
++				// zeny calculation moblv + random moblv [Valaris]
++				zeny = (int) ((md->level + rnd()%md->level) * per * bonus / 100.);
++				if(md->db->mexp > 0)
++					zeny *= rnd()%250;
++
++				//Check the zeny rate
++				if(mob_zeny_rate > 0)
++					zeny *= mob_zeny_rate / 100;
++				else
++				{
++					if(md->status.mode&MD_BOSS)
++						zeny *= battle_config.zeny_from_boss_rate / 100;
++					else
++						zeny *= battle_config.zeny_from_mobs_rate / 100;
++				}
++			}
++			else
++				zeny = md->db->zeny;
+ 		}
+ 
+ 		if (map[m].flag.nobaseexp || !md->db->base_exp)
+@@ -3676,6 +3697,9 @@
+ 	exp = (double)atoi(str[8]) * (double)battle_config.job_exp_rate / 100.;
+ 	db->job_exp = (unsigned int)cap_value(exp, 0, UINT_MAX);
+ 
++	//Adjust zeny
++	db->zeny = -1;
++
+ 	status->rhw.range = atoi(str[9]);
+ 	status->rhw.atk = atoi(str[10]);
+ 	status->rhw.atk2 = atoi(str[11]);
+@@ -4577,6 +4601,64 @@
+ 	return true;
+ }
+ 
++/*==========================================
++ * Get zeny adjustments from mob_zeny_db.txt
++ * [Cydh]
++ * house.bad@gmail.com
++ *------------------------------------------*/
++static bool mob_readdb_mobzeny(char* str[], int columns, int current)
++{
++	int class_, zeny, zeny_rate;
++	struct mob_db* mob;
++
++	class_ = atoi(str[0]);
++
++	if( (mob = mob_db(class_)) == mob_dummy )
++	{
++		ShowWarning("mob_readdb_mobzeny: Invalid mob_id id %d.\n", class_);
++		return false;
++	}
++
++	zeny = atoi(str[1]);
++	zeny_rate = atoi(str[2]);
++
++	if(zeny > MAX_ZENY)
++	{
++		ShowWarning("mob_readdb_mobzeny: Zeny '%d' is out of range. (mob_id: %d). Defaulting to '%d'.\n", zeny, class_, MAX_ZENY);
++		zeny = MAX_ZENY;
++	}
++
++	if(zeny_rate > MAX_ZENY_FROM_MOBS_RATES)
++	{
++		ShowWarning("mob_readdb_mobzeny: Rate '%d' is out of range. (mob_id: %d). Defaulting to '%d'.\n", zeny, class_, MAX_ZENY_FROM_MOBS_RATES);
++		zeny_rate = MAX_ZENY_FROM_MOBS_RATES;
++	}
++	
++	zeny = cap_value(zeny,-1,MAX_ZENY);
++
++	//better calcuate the zeny here if zeny and zeny_rate is set, reduce the server works when mob_dead
++	//and if the zeny is -1 or not decied on mob_zeny_db.txt, leave the calculation later
++	if(zeny == 0)
++		mob->zeny = 0;
++	else if(zeny > 0){	//if zeny != -1
++		if(zeny_rate > 0)	//rate based on mob_zeny_db.txt
++			zeny *= zeny_rate / 100;
++		else	//leave battle_config calcuates it!
++		{
++			if(mob->status.mode&MD_BOSS)
++				zeny *= battle_config.zeny_from_boss_rate / 100;
++			else
++				zeny *= battle_config.zeny_from_mobs_rate / 100;
++		}
++
++		mob->zeny = zeny;
++	}
++
++	mob->zeny_rate = cap_value(zeny_rate,0,MAX_ZENY_FROM_MOBS_RATES);
++
++	return true;
++}
++
+ /**
+  * read all mob-related databases
+  */
+@@ -4597,6 +4679,7 @@
+ 	sv_readdb(db_path, "mob_avail.txt", ',', 2, 12, -1, &mob_readdb_mobavail);
+ 	mob_read_randommonster();
+ 	sv_readdb(db_path, DBPATH"mob_race2_db.txt", ',', 2, 20, -1, &mob_readdb_race2);
++	sv_readdb(db_path, "mob_zeny_db.txt", ',', 2, 3, -1, &mob_readdb_mobzeny);	// [Cydh]
+ }
+ 
+ void mob_reload(void) {
+Index: src/map/mob.h
+===================================================================
+--- src/map/mob.h	(revision 17163)
++++ src/map/mob.h	(working copy)
+@@ -38,6 +38,9 @@
+ //Used to determine default enemy type of mobs (for use in eachinrange calls)
+ #define DEFAULT_ENEMY_TYPE(md) (md->special_state.ai?BL_CHAR:BL_MOB|BL_PC|BL_HOM|BL_MER)
+ 
++//Maximum zeny rates from mobs. [Cydh]
++#define MAX_ZENY_FROM_MOBS_RATES 1000000
++
+ //Externals for the status effects. [Epoque]
+ extern const int mob_manuk[8];
+ extern const int mob_splendide[5];
+@@ -117,6 +120,7 @@
+ 	int maxskill;
+ 	struct mob_skill skill[MAX_MOBSKILL];
+ 	struct spawn_info spawn[10];
++	unsigned int zeny, zeny_rate;	// [Cydh]
+ };
+ 
+ struct mob_data {

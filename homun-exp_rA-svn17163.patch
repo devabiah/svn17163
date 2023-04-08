@@ -1,0 +1,472 @@
+Index: conf/battle/exp.conf
+===================================================================
+--- conf/battle/exp.conf	(revision 17163)
++++ conf/battle/exp.conf	(working copy)
+@@ -15,6 +15,9 @@
+ // Rate at which job exp. is given. (Note 2)
+ job_exp_rate: 100
+ 
++// Adjust exp. gained for homunculus. (Note2) [Cydh]
++hom_exp_rate: 100
++
+ // Turn this on to allow a player to level up more than once from a kill. (Note 1)
+ multi_level_up: no
+ 
+Index: conf/msg_conf/map_msg.conf
+===================================================================
+--- conf/msg_conf/map_msg.conf	(revision 17163)
++++ conf/msg_conf/map_msg.conf	(working copy)
+@@ -1409,5 +1409,13 @@
+ // @skillid (extension)
+ 1398: -- Displaying first %d partial matches:
+ 
++// Homunculus exp.
++1399: Your homunculus gained '%d' Exp.
++1400: Show homunculus gained exp.
++1401: Homunculus gained exp. is not shown.
++1402: Homunculus EXP Rates %.2fx
++1403: Homunculus EXP: %d.
++1404: NoHomExp | 
++
+ //Custom translations
+ import: conf/import/msg_conf.txt
+Index: db/const.txt
+===================================================================
+--- db/const.txt	(revision 17163)
++++ db/const.txt	(working copy)
+@@ -365,6 +365,8 @@
+ mf_pvp_nocalcrank	50
+ mf_battleground	51
+ mf_reset	52
++mf_nohomexp	53
++mf_hexp	54
+ 
+ cell_walkable	0
+ cell_shootable	1
+Index: db/mob_homun_exp.txt
+===================================================================
+--- db/mob_homun_exp.txt	(revision 0)
++++ db/mob_homun_exp.txt	(working copy)
+@@ -0,0 +1,36 @@
++// ------------- Cydh Modification -------------
++// house.bad@gmail.com
++// ===============================================
++// <mob_id>,<exp>{,rate}
++// -----------------------------------------------
++// <mob_id>
++//	- Look at mob_db.txt on db/re or db/pre-re folder
++// <exp>
++//	- Exp. amount that can be gained.
++//	- 0 means mob doesn't give homunculus exp.
++//	- -1 means, left the exp. amount based on normal calculation (based on mob exp.).
++//	- Min. value for homunculus gets exp is 1.
++//	- Max. value is INT_MAX.
++// <rate>
++//	- [Optional] To adjust rate that will be gained.
++//	- If you left this 0 or empty, the calculation based on conf/battle/exp.conf -> homun_exp_rate
++//	- 1 = 1% = 0.01x
++//	- 100 = 100% = 1x
++//	- 1000000 = 1,000,000% = 10,000x
++//	- Min. value is between 1.
++//	- Max. value is 1000000. MAX_HOMUNCULUS_EXP_RATE on src/map/mob.h
++//
++// Helpful examples ----------------------------
++//1002,0				: Poring will never gives homun exp.
++//1002,1000			: Poring will gives homun 1,000 exp. and the rate calculation based on homun_exp_rate
++//1002,1000,1000		: Poring will gives homun 10,000 total exp. 1k exp * 10.
++//1002,-1,1000		: Poring will gives homun the normal exp. but the rate will be multiplied to 10x.
++// ----- Don't do this waste thing!
++//1002,-1
++//1002,0,1000000
++// -----------------------------------------------
++1001,0
++1002,-1,1000
++1004,1000
++1005,1000,1000
++1273,1000
+Index: src/map/atcommand.c
+===================================================================
+--- src/map/atcommand.c	(revision 17163)
++++ src/map/atcommand.c	(working copy)
+@@ -3905,6 +3905,8 @@
+ 		strcat(atcmd_output, msg_txt(1096)); // PartyLock |
+ 	if (map[m_id].flag.guildlock)
+ 		strcat(atcmd_output, msg_txt(1097)); // GuildLock |
++	if (map[m_id].flag.nohomexp)
++		strcat(atcmd_output, msg_txt(1404)); // NoHomExp |
+ 	clif_displaymessage(fd, atcmd_output);
+ 
+ 	switch (list) {
+@@ -6744,6 +6746,9 @@
+ 			else
+ 				clif_displaymessage(fd, atcmd_output);
+ 		}
++		// show homunculus exp decided by db/mob_hom_exp.txt.
++		sprintf(atcmd_output, msg_txt(1403), mob->hom_exp); // Homunculus EXP: %d.
++		clif_displaymessage(fd, atcmd_output);
+ 	}
+ 	return 0;
+ }
+@@ -7353,6 +7358,8 @@
+ 	snprintf(buf, CHAT_SIZE_MAX, msg_txt(1301), // Other Drop Rates: MvP %.2fx / Card-Based %.2fx / Treasure %.2fx
+ 		battle_config.item_rate_mvp/100., battle_config.item_rate_adddrop/100., battle_config.item_rate_treasure/100.);
+ 	clif_displaymessage(fd, buf);
++	snprintf(buf, CHAT_SIZE_MAX, msg_txt(1402), battle_config.hom_exp_rate/100.);	// Homunculus EXP Rates: %.2fx
++	clif_displaymessage(fd, buf);
+ 
+ 	return 0;
+ }
+@@ -7568,6 +7575,7 @@
+ 		checkflag(nojobexp);			checkflag(nomobloot);			checkflag(nomvploot);	checkflag(nightenabled);
+ 		checkflag(restricted);			checkflag(nodrop);				checkflag(novending);	checkflag(loadevent);
+ 		checkflag(nochat);				checkflag(partylock);			checkflag(guildlock);	checkflag(src4instance);
++		checkflag(nohomexp);
+ 		clif_displaymessage(sd->fd," ");
+ 		clif_displaymessage(sd->fd,msg_txt(1312)); // Usage: "@mapflag monster_noteleport 1" (0=Off | 1=On)
+ 		clif_displaymessage(sd->fd,msg_txt(1313)); // Type "@mapflag available" to list the available mapflags.
+@@ -7587,6 +7595,7 @@
+ 	setflag(nojobexp);			setflag(nomobloot);			setflag(nomvploot);			setflag(nightenabled);
+ 	setflag(restricted);		setflag(nodrop);			setflag(novending);			setflag(loadevent);
+ 	setflag(nochat);			setflag(partylock);			setflag(guildlock);			setflag(src4instance);
++	setflag(nohomexp);
+ 
+ 	clif_displaymessage(sd->fd,msg_txt(1314)); // Invalid flag name or flag.
+ 	clif_displaymessage(sd->fd,msg_txt(1312)); // Usage: "@mapflag monster_noteleport 1" (0=Off | 1=On)
+@@ -7598,7 +7607,7 @@
+ 	clif_displaymessage(sd->fd,"nozenypenalty, notrade, noskill, nowarp, nowarpto, noicewall, snow, clouds, clouds2,");
+ 	clif_displaymessage(sd->fd,"fog, fireworks, sakura, leaves, nogo, nobaseexp, nojobexp, nomobloot,");
+ 	clif_displaymessage(sd->fd,"nomvploot, nightenabled, restricted, nodrop, novending, loadevent, nochat, partylock,");
+-	clif_displaymessage(sd->fd,"guildlock, src4instance");
++	clif_displaymessage(sd->fd,"guildlock, src4instance, nohomexp");
+ 
+ #undef checkflag
+ #undef setflag
+@@ -8771,6 +8780,34 @@
+ 	#undef MC_CART_MDFY
+ }
+ 
++/*==========================================
++ * @showhomexp - Show exp gained by homunculus
++ * [Cydh] house.bad@gmail.com
++ *------------------------------------------*/
++ACMD_FUNC(showhomexp)
++{
++	nullpo_retr(-1,sd);
++	
++	if ( !merc_is_hom_active(sd->hd) ) {
++		clif_displaymessage(fd, msg_txt(1254)); // You do not have a homunculus.
++		return -1;
++	}
++
++	if(!sd->state.showhomexp)
++	{
++		sd->state.showhomexp = 1;
++		sprintf(atcmd_output,msg_txt(1400));
++	}
++	else
++	{
++		sd->state.showhomexp = 0;
++		sprintf(atcmd_output,msg_txt(1401));
++	}
++	
++	clif_displaymessage(fd, atcmd_output);
++	return 0;
++}
++
+ /**
+  * Fills the reference of available commands in atcommand DBMap
+  **/
+@@ -9031,7 +9068,8 @@
+ 		ACMD_DEF2("rmvperm", addperm),
+ 		ACMD_DEF(unloadnpcfile),
+ 		ACMD_DEF(cart),
+-		ACMD_DEF(mount2)
++		ACMD_DEF(mount2),
++		ACMD_DEF(showhomexp)
+ 	};
+ 	AtCommandInfo* atcommand;
+ 	int i;
+Index: src/map/battle.c
+===================================================================
+--- src/map/battle.c	(revision 17163)
++++ src/map/battle.c	(working copy)
+@@ -5904,6 +5904,7 @@
+ 	{ "item_restricted_consumption_type",   &battle_config.item_restricted_consumption_type,1,      0,      1,              },
+ 	{ "max_walk_path",						&battle_config.max_walk_path,					17,     1,      MAX_WALKPATH,   },
+ 	{ "item_enabled_npc",					&battle_config.item_enabled_npc,				1,      0,      1,				},
++	{ "hom_exp_rate",						&battle_config.hom_exp_rate,					100,	1,		INT_MAX,		},	// [Cydh]
+ };
+ #ifndef STATS_OPT_OUT
+ /**
+Index: src/map/battle.h
+===================================================================
+--- src/map/battle.h	(revision 17163)
++++ src/map/battle.h	(working copy)
+@@ -487,6 +487,8 @@
+ 	int item_restricted_consumption_type;
+ 	int max_walk_path;
+ 	int item_enabled_npc;
++
++	int hom_exp_rate;	// [Cydh]
+ 	} battle_config;
+ 
+ void do_init_battle(void);
+Index: src/map/map.c
+===================================================================
+--- src/map/map.c	(revision 17163)
++++ src/map/map.c	(working copy)
+@@ -2903,6 +2903,7 @@
+ 		map[i].nocommand = 0;  // nocommand mapflag level
+ 		map[i].bexp      = 100;  // per map base exp multiplicator
+ 		map[i].jexp      = 100;  // per map job exp multiplicator
++		map[i].hexp		 = 100;
+ 		memset(map[i].drop_list, 0, sizeof(map[i].drop_list));  // pvp nightmare drop list
+ 
+ 		// adjustments
+Index: src/map/map.h
+===================================================================
+--- src/map/map.h	(revision 17163)
++++ src/map/map.h	(working copy)
+@@ -569,6 +569,7 @@
+ 		unsigned guildlock :1;
+ 		unsigned src4instance : 1; // To flag this map when it's used as a src map for instances
+ 		unsigned reset :1; // [Daegaladh]
++		unsigned nohomexp	: 1; // [Cydh]
+ 	} flag;
+ 	struct point save;
+ 	struct npc_data *npc[MAX_NPC_PER_MAP];
+@@ -594,6 +595,7 @@
+ 	// Instance Variables
+ 	int instance_id;
+ 	int instance_src_map;
++	int hexp;	// [Cydh]
+ };
+ 
+ /// Stores information about a remote map (for multi-mapserver setups).
+Index: src/map/mob.c
+===================================================================
+--- src/map/mob.c	(revision 17163)
++++ src/map/mob.c	(working copy)
+@@ -2099,6 +2099,7 @@
+ 		struct party_data *p;
+ 		int id,zeny;
+ 		unsigned int base_exp,job_exp;
++		unsigned int hom_exp, hom_exp_rate;	// [Cydh]
+ 	} pt[DAMAGELOG_SIZE];
+ 	int i, temp, count, m = md->bl.m, pnum = 0;
+ 	int dmgbltypes = 0;  // bitfield of all bl types, that caused damage to the mob and are elligible for exp distribution
+@@ -2201,6 +2202,7 @@
+ 	for(i = 0; i < DAMAGELOG_SIZE && md->dmglog[i].id; i++) {
+ 		int flag=1,zeny=0;
+ 		unsigned int base_exp, job_exp;
++		unsigned int hom_exp;	// [Cydh]
+ 		double per; //Your share of the mob's exp
+ 
+ 		if (!tmpsd[i]) continue;
+@@ -2253,6 +2255,12 @@
+ 		else
+ 			job_exp = (unsigned int)cap_value(md->db->job_exp * per * bonus/100. * map[m].jexp/100., 1, UINT_MAX);
+ 
++		//Homun exp
++		if(map[m].flag.nohomexp || md->db->hom_exp == 0 || md->dmglog[i].flag != MDLF_HOMUN)
++			hom_exp = 0;
++		else
++			hom_exp = (unsigned int)cap_value(md->db->hom_exp * per * bonus/100. * map[m].hexp/100., 1, UINT_MAX);
++
+ 		if ( ( temp = tmpsd[i]->status.party_id)>0 ) {
+ 			int j;
+ 			for( j = 0; j < pnum && pt[j].id != temp; j++ ); //Locate party.
+@@ -2282,8 +2290,17 @@
+ 				flag = 0;
+ 			}
+ 		}
+-		if(base_exp && md->dmglog[i].flag == MDLF_HOMUN) //tmpsd[i] is null if it has no homunc.
+-			merc_hom_gainexp(tmpsd[i]->hd, base_exp);
++		// edited for homunculus exp. [Cydh]
++		if(md->db->hom_exp > 0 && md->dmglog[i].flag == MDLF_HOMUN) //tmpsd[i] is null if it has no homunc.
++		{
++			merc_hom_gainexp(tmpsd[i]->hd, hom_exp);
++			if(tmpsd[i]->state.showhomexp)
++			{
++				char output[CHAT_SIZE_MAX];
++				sprintf(output,msg_txt(1399), hom_exp);
++				clif_disp_onlyself(tmpsd[i], output, strlen(output));
++			}
++		}
+ 		if(flag) {
+ 			if(base_exp || job_exp)
+ 			{
+@@ -3675,6 +3692,10 @@
+ 
+ 	exp = (double)atoi(str[8]) * (double)battle_config.job_exp_rate / 100.;
+ 	db->job_exp = (unsigned int)cap_value(exp, 0, UINT_MAX);
++	
++	// [Cydh]
++	exp = (double)atoi(str[7]);
++	db->hom_exp = (unsigned int)cap_value(exp, 0, UINT_MAX);
+ 
+ 	status->rhw.range = atoi(str[9]);
+ 	status->rhw.atk = atoi(str[10]);
+@@ -4577,6 +4598,60 @@
+ 	return true;
+ }
+ 
++/*==========================================
++ * Get exp adjustments for Homunculus from mob_homun_exp.txt
++ * [Cydh]
++ * house.bad@gmail.com
++ *------------------------------------------*/
++static bool mob_readdb_mobhomunexp(char* str[], int columns, int current)
++{
++	int class_, hom_exp, hom_exp_rate;
++	double exp;
++	struct mob_db* mob;
++
++	class_ = atoi(str[0]);
++
++	if( (mob = mob_db(class_)) == mob_dummy )
++	{
++		ShowWarning("mob_readdb_mobhomunexp: Invalid mob_id id %d.\n", class_);
++		return false;
++	}
++
++	hom_exp = abs(atoi(str[1]));
++	hom_exp_rate = abs(atoi(str[2]));
++
++	if(hom_exp > INT_MAX)
++	{
++		ShowWarning("mob_readdb_mobhomunexp: EXP '%d' is out of range. (mob_id: %d). Defaulting to '%d'.\n", hom_exp, class_, INT_MAX);
++		hom_exp = INT_MAX;
++	}
++
++	if(hom_exp_rate > MAX_HOMUNCULUS_EXP_RATE)
++	{
++		ShowWarning("mob_readdb_mobhomunexp: Rate '%d' is out of range. (mob_id: %d). Defaulting to '%d'.\n", hom_exp_rate, class_, MAX_HOMUNCULUS_EXP_RATE);
++		hom_exp_rate = MAX_HOMUNCULUS_EXP_RATE;
++	}
++	
++	if(hom_exp != 0)
++	{
++		if(hom_exp == -1)
++			exp = (double) mob->hom_exp;
++		else
++			exp = (double) hom_exp;
++
++		if(hom_exp_rate > 0)
++			exp *= (double)hom_exp_rate / 100.;
++		else
++			exp *= (double)battle_config.hom_exp_rate / 100.;
++
++		mob->hom_exp = (unsigned int)cap_value(exp, 0, UINT_MAX);
++	}
++	else
++		mob->hom_exp = 0;
++
++	return true;
++}
++
+ /**
+  * read all mob-related databases
+  */
+@@ -4597,6 +4672,7 @@
+ 	sv_readdb(db_path, "mob_avail.txt", ',', 2, 12, -1, &mob_readdb_mobavail);
+ 	mob_read_randommonster();
+ 	sv_readdb(db_path, DBPATH"mob_race2_db.txt", ',', 2, 20, -1, &mob_readdb_race2);
++	sv_readdb(db_path, "mob_homun_exp.txt", ',', 2, 3, -1, &mob_readdb_mobhomunexp);	// [Cydh]
+ }
+ 
+ void mob_reload(void) {
+Index: src/map/mob.h
+===================================================================
+--- src/map/mob.h	(revision 17163)
++++ src/map/mob.h	(working copy)
+@@ -38,6 +38,9 @@
+ //Used to determine default enemy type of mobs (for use in eachinrange calls)
+ #define DEFAULT_ENEMY_TYPE(md) (md->special_state.ai?BL_CHAR:BL_MOB|BL_PC|BL_HOM|BL_MER)
+ 
++//Maximum exp. rate for homunculus. [Cydh]
++#define MAX_HOMUNCULUS_EXP_RATE 1000000
++
+ //Externals for the status effects. [Epoque]
+ extern const int mob_manuk[8];
+ extern const int mob_splendide[5];
+@@ -117,6 +120,7 @@
+ 	int maxskill;
+ 	struct mob_skill skill[MAX_MOBSKILL];
+ 	struct spawn_info spawn[10];
++	unsigned int hom_exp; // [Cydh]
+ };
+ 
+ struct mob_data {
+Index: src/map/npc.c
+===================================================================
+--- src/map/npc.c	(revision 17163)
++++ src/map/npc.c	(working copy)
+@@ -3405,6 +3405,13 @@
+ 		map[m].flag.guildlock=state;
+ 	else if (!strcmpi(w3,"reset"))
+ 		map[m].flag.reset=state;
++	else if (!strcmpi(w3,"nohomexp"))	// Homun doesn't get exp. at this mapflag. [Cydh]
++		map[m].flag.nohomexp=state;
++	else if (!strcmpi(w3,"hexp")) {	// Adjust more rate at this mapflag. [Cydh]
++		map[m].hexp = (state) ? atoi(w4) : 100;
++		if( map[m].hexp < 0 ) map[m].hexp = 100;
++		map[m].flag.nohomexp = (map[m].hexp==0)?1:0;
++	}
+ 	else
+ 		ShowError("npc_parse_mapflag: unrecognized mapflag '%s' (file '%s', line '%d').\n", w3, filepath, strline(buffer,start-buffer));
+ 
+Index: src/map/pc.h
+===================================================================
+--- src/map/pc.h	(revision 17163)
++++ src/map/pc.h	(working copy)
+@@ -144,6 +144,7 @@
+ 		struct guild *gmaster_flag;
+ 		unsigned int prevend : 1;//used to flag wheather you've spent 40sp to open the vending or not.
+ 		unsigned int warping : 1;//states whether you're in the middle of a warp processing
++		unsigned short showhomexp;	//for showing exp. gained by your homunculus.	[Cydh]
+ 	} state;
+ 	struct {
+ 		unsigned char no_weapon_damage, no_magic_damage, no_misc_damage;
+Index: src/map/script.c
+===================================================================
+--- src/map/script.c	(revision 17163)
++++ src/map/script.c	(working copy)
+@@ -399,7 +399,9 @@
+ 	MF_MONSTER_NOTELEPORT,
+ 	MF_PVP_NOCALCRANK,	//50
+ 	MF_BATTLEGROUND,
+-	MF_RESET
++	MF_RESET,
++	MF_NOHOMEXP,	// [Cydh]
++	MF_HEXP	// [Cydh]
+ };
+ 
+ const char* script_op2name(int op)
+@@ -10701,6 +10703,8 @@
+ 			case MF_PVP_NOCALCRANK:		script_pushint(st,map[m].flag.pvp_nocalcrank); break;
+ 			case MF_BATTLEGROUND:		script_pushint(st,map[m].flag.battleground); break;
+ 			case MF_RESET:				script_pushint(st,map[m].flag.reset); break;
++			case MF_NOHOMEXP:			script_pushint(st,map[m].flag.nohomexp); break;
++			case MF_HEXP:				script_pushint(st,map[m].hexp); break;
+ 		}
+ 	}
+ 
+@@ -10800,6 +10804,8 @@
+ 			case MF_PVP_NOCALCRANK:		map[m].flag.pvp_nocalcrank = 1; break;
+ 			case MF_BATTLEGROUND:		map[m].flag.battleground = (val <= 0 || val > 2) ? 1 : val; break;
+ 			case MF_RESET:				map[m].flag.reset = 1; break;
++			case MF_NOHOMEXP:			map[m].flag.nohomexp = 1; break;
++			case MF_HEXP:				map[m].hexp = (val <= 0) ? 100 : val; break;
+ 		}
+ 	}
+ 
+@@ -10886,6 +10892,8 @@
+ 			case MF_PVP_NOCALCRANK:		map[m].flag.pvp_nocalcrank = 0; break;
+ 			case MF_BATTLEGROUND:		map[m].flag.battleground = 0; break;
+ 			case MF_RESET:				map[m].flag.reset = 0; break;
++			case MF_NOHOMEXP:			map[m].flag.nohomexp=0; break;
++			case MF_HEXP:				map[m].hexp=0; break;
+ 		}
+ 	}
+ 
